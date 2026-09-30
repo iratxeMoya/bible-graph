@@ -49,7 +49,7 @@ tradicionales, ponderadas por votos.
 
 | Fuente | URL | Licencia | Contenido |
 |---|---|---|---|
-| RV1909 (eBible.org) | `https://ebible.org/Scriptures/spaRV1909_vpl.zip` | Dominio público | 31.102 versículos, 66 libros |
+| RV1909 (eBible.org) | `https://ebible.org/Scriptures/spaRV1909_vpl.zip` | Dominio público | 31.084 versículos con texto, 66 libros |
 | OpenBible cross-references | `https://a.openbible.info/data/cross-references.zip` | CC-BY | 344.799 referencias |
 
 Hechos comprobados sobre los ficheros (2026-09-30):
@@ -68,9 +68,23 @@ Hechos comprobados sobre los ficheros (2026-09-30):
   18 de ellas cruzan de un libro a otro.
 - 3.534 referencias tienen votos ≤ 0.
 - No hay pares (origen, primer versículo de destino) duplicados.
-- Solo una referencia apunta a un versículo que no existe en RV1909: `3John.1.15`.
+- El fichero de RV1909 tiene 31.102 líneas, pero 18 no tienen texto: `NUM 12:16`,
+  `NUM 29:40`, `1SA 23:29`, `2SA 20:26`, `2CH 33:25`, `JOB 35:16`, `JOB 38:39-41`,
+  `JOB 40:20-24`, `HOS 11:12`, `JON 1:17`, `ACT 19:41` y `2CO 13:14`. Son los puntos
+  donde la numeración de RV1909 difiere de la de la KJV, que es la que usa OpenBible.
+  Esas 18 referencias no se cargan como versículos.
+- 257 referencias de OpenBible tocan un versículo que no existe en RV1909: 256 por
+  las 18 líneas sin texto y una por `3John.1.15`. Se descartan. Quedan 344.542
+  aristas.
 
 OpenBible exige atribución. El pie de página de la web la muestra.
+
+### Limitación conocida: numeración de versículos
+
+En los capítulos afectados por esas 18 diferencias (por ejemplo Números 13, donde el
+13:1 de RV1909 es el 12:16 de la KJV), las referencias cruzadas pueden apuntar al
+versículo contiguo. Son una docena de capítulos de 1.189. Corregirlo exige una tabla
+de equivalencias entre numeraciones y queda fuera del MVP.
 
 ## 4. Estructura del repo
 
@@ -81,18 +95,23 @@ bible-graph/
 ├── render.yaml
 ├── backend/
 │   ├── Dockerfile
-│   ├── pyproject.toml
+│   ├── requirements.txt         # dependencias de producción
+│   ├── requirements-dev.txt     # añade pytest y el cliente de tests
+│   ├── pyproject.toml           # configuración de pytest
 │   ├── app/
 │   │   ├── main.py              # FastAPI, CORS, /health
 │   │   ├── config.py            # settings desde variables de entorno
 │   │   ├── db.py                # pool de psycopg 3
+│   │   ├── refs.py              # formato de referencias ("Tit 3:5-7")
+│   │   ├── schemas.py           # modelos de respuesta
 │   │   ├── search.py            # SQL de búsqueda y expansión del grafo
 │   │   └── routes.py            # /api/search, /api/verses/{id}
 │   ├── ingest/
 │   │   ├── __main__.py          # CLI: python -m ingest
 │   │   ├── books.py             # tabla fija de los 66 libros
-│   │   ├── bible_text.py        # descarga y parseo de RV1909
-│   │   ├── cross_refs.py        # descarga y parseo de OpenBible
+│   │   ├── download.py          # descarga con caché y lectura de zips
+│   │   ├── bible_text.py        # parseo de RV1909
+│   │   ├── cross_refs.py        # parseo de OpenBible
 │   │   └── load.py              # aplica schema.sql y hace COPY
 │   ├── sql/schema.sql
 │   └── tests/
@@ -180,11 +199,13 @@ Notas:
 `python -m ingest [--force-download]`, con `DATABASE_URL` en el entorno.
 
 1. Aplica `sql/schema.sql`, que es idempotente.
-2. Descarga los dos zips a `data/` (ignorada por git). Reutiliza los ya descargados
-   salvo con `--force-download`.
+2. Descarga los dos zips a un directorio de caché (`INGEST_CACHE_DIR`, por defecto
+   `data/`; en Docker, un volumen en `/cache`). Reutiliza los ya descargados salvo
+   con `--force-download`.
 3. Parsea:
    - **RV1909**: lee `spaRV1909_vpl.txt` con `utf-8-sig`. Cada línea se divide en
-     código de libro, `cap:vers` y texto. El código se traduce con `books.py`.
+     código de libro, `cap:vers` y texto. El código se traduce con `books.py`. Las
+     líneas sin texto se omiten.
    - **OpenBible**: salta la cabecera, convierte cada referencia OSIS a `BBCCCVVV` y,
      si el destino es un rango, separa primer versículo y versículo final.
 4. Carga en una sola transacción: `TRUNCATE` de las cuatro tablas y `COPY` de cada
@@ -192,8 +213,15 @@ Notas:
 5. Descarta las aristas cuyo origen o primer versículo de destino no exista en
    `verses`, y las lista en el resumen.
 6. Imprime un resumen: libros, versículos, aristas cargadas y aristas descartadas.
-7. Termina con código de error si hay menos de 66 libros, si los versículos no son
-   31.102 o si las aristas cargadas son menos de 340.000.
+7. Antes de tocar la BD, termina con código de error y sin cargar nada si los libros
+   con texto no son 66, si los versículos no son 31.084 o si las aristas cargables
+   son menos de 340.000.
+8. Antes de cargar imprime el servidor y la base de datos de destino, sin
+   credenciales.
+
+En compose, la BD de destino de la ingesta se cambia con `INGEST_DATABASE_URL`, no
+con `DATABASE_URL`: así una `DATABASE_URL` que ya exista en la shell por otro
+proyecto no redirige la carga por accidente.
 
 `books.py` contiene, para cada uno de los 66 libros: número, código OSIS, código de
 eBible, nombre en español, abreviatura en español y testamento.
@@ -261,11 +289,17 @@ Respuesta:
 ### Construcción del grafo
 
 1. **Semillas.** `websearch_to_tsquery('es_unaccent', q)` contra `verse_texts.tsv`
-   con `translation = 'RV1909'`. Orden: `ts_rank_cd` descendente y, en caso de
-   empate, `verse_id` ascendente. Se toman las primeras `seeds`.
+   con `translation = 'RV1909'`. Orden: `ts_rank_cd` descendente; a igualdad, suma
+   descendente de los votos positivos de las aristas que llegan al versículo; a
+   igualdad, `verse_id` ascendente. Se toman las primeras `seeds`.
+
+   El desempate por votos es necesario: `ts_rank_cd` da la misma puntuación a todos
+   los versículos que contienen la palabra una vez, y sin él "gracia" devolvería
+   siempre los primeros versículos del Génesis.
 2. **Expansión.** CTE recursiva desde las semillas. Para cada nodo de la frontera, un
-   `LATERAL` toma sus `neighbors` aristas de más peso con `weight >= min_weight`,
-   mirando tanto `from_verse_id` como `to_verse_id`. Se detiene en `hops`. El salto
+   `LATERAL` toma sus `neighbors` vecinos de más peso con `weight >= min_weight`,
+   mirando tanto `from_verse_id` como `to_verse_id`. Un vecino unido por aristas en
+   los dos sentidos cuenta una sola vez, con el mayor de los dos pesos. Se detiene en `hops`. El salto
    de un nodo es el mínimo con el que se alcanza.
 3. **Recorte.** Si hay más de 600 nodos, se conservan los 600 de menor salto (a
    igualdad de salto, por `verse_id`) y `truncated` es `true`.
@@ -280,12 +314,15 @@ walk(id, hop) AS (
   SELECT n.id, w.hop + 1
   FROM walk w
   CROSS JOIN LATERAL (
-    SELECT other AS id FROM (
+    SELECT e.other AS id FROM (
       SELECT to_verse_id   AS other, weight FROM edges WHERE from_verse_id = w.id
       UNION ALL
       SELECT from_verse_id AS other, weight FROM edges WHERE to_verse_id   = w.id
-    ) e WHERE weight >= %(min_weight)s
-    ORDER BY weight DESC LIMIT %(neighbors)s
+    ) e
+    WHERE e.weight >= %(min_weight)s AND e.other <> w.id
+    GROUP BY e.other
+    ORDER BY max(e.weight) DESC, e.other
+    LIMIT %(neighbors)s
   ) n
   WHERE w.hop < %(hops)s
 )
@@ -295,7 +332,8 @@ SELECT id, min(hop) AS hop FROM walk GROUP BY id;
 ### `GET /api/verses/{id}`
 
 Sin `end`, devuelve un versículo. Con `end`, devuelve los versículos con
-`id BETWEEN {id} AND {end}` en orden.
+`id BETWEEN {id} AND {end}` en orden. `{id}` y `end` deben estar entre 1 y
+66.999.999.
 
 ```json
 {
@@ -307,20 +345,27 @@ Sin `end`, devuelve un versículo. Con `end`, devuelve los versículos con
 ```
 
 - 404 si `{id}` no existe.
-- 422 si `end` es menor que `id` o el rango abarca más de 200 versículos.
+- 422 si `end` es menor que `id`, si el rango abarca más de 200 versículos o si
+  algún ID está fuera de rango.
 
 ### Errores y límites
 
-- `q` ausente o fuera de rango: 422, con la validación de FastAPI.
-- Sin coincidencias, o consulta formada solo por palabras vacías: 200 con `nodes` y
-  `edges` vacíos y `total_matches` 0.
+- A `q` se le quitan los espacios de los extremos antes de validar. `q` ausente, con
+  menos de 2 o más de 100 caracteres, o con el carácter NUL: 422.
+- Sin coincidencias, o consulta formada solo por palabras vacías ("de la", "fue"):
+  200 con `nodes` y `edges` vacíos y `total_matches` 0.
 - `statement_timeout` de 5 s en las consultas de la API. Si se supera: 503.
 - BD inaccesible: 503.
 
 ### Conexión a la BD
 
 Pool asíncrono de psycopg 3 (`psycopg_pool.AsyncConnectionPool`), con un máximo de 5
-conexiones, abierto en el `lifespan` de FastAPI. Se configura con `DATABASE_URL`.
+conexiones, abierto en el `lifespan` de FastAPI sin esperar a que la BD responda. Se
+configura con `DATABASE_URL`.
+
+Dos ajustes para que funcione a través del pooler de Neon (PgBouncer en modo
+transacción): las sentencias preparadas están desactivadas y el `statement_timeout`
+se fija con `SET LOCAL` dentro de cada transacción, no como opción de conexión.
 
 ### CORS
 
@@ -399,22 +444,25 @@ de React y `fetch`; sin librería de estado ni router. Interfaz en español.
 | `db` | `pgvector/pgvector:pg17` | Volumen persistente, healthcheck `pg_isready` |
 | `api` | `backend/Dockerfile` | Uvicorn con `--reload`, código montado, puerto 8000, espera a `db` sana |
 | `frontend` | `frontend/Dockerfile`, etapa `dev` | Vite con recarga en caliente, puerto 5173 |
-| `ingest` | la de `api` | Perfil `tools`. Se lanza con `docker compose run --rm ingest` |
+| `ingest` | la de `api` | Perfil `tools`. Se lanza con `docker compose run --rm ingest`. Caché de descargas en un volumen |
 
 Se usa la imagen con pgvector para que la fase 2 no obligue a cambiar de imagen.
 
 ### Dockerfiles
 
 - **`backend/Dockerfile`**: `python:3.12-slim`, usuario sin privilegios, escucha en
-  `${PORT:-8000}`. Misma imagen en local y en producción.
-- **`frontend/Dockerfile`**: etapa `dev` (Vite) y etapa `build` más nginx para probar
-  en local el build de producción. Cloudflare Pages no lo usa.
+  `${PORT:-8000}`. El mismo Dockerfile en local y en producción; en local se
+  construye con `requirements-dev.txt` para incluir pytest.
+- **`frontend/Dockerfile`**: etapa `dev` (Vite, con el código y `node_modules`
+  montados desde el host), etapa `build` y etapa `static` (nginx) para probar en
+  local el build de producción. Cloudflare Pages no lo usa.
 
 ### Variables de entorno
 
 | Variable | Dónde | Local | Producción |
 |---|---|---|---|
-| `DATABASE_URL` | API e ingesta | `postgresql://bible:bible@db:5432/bible` | Neon: con pooling para la API, directa para la ingesta |
+| `DATABASE_URL` | API | `postgresql://bible:bible@db:5432/bible` | Neon, cadena con pooling |
+| `INGEST_DATABASE_URL` | Ingesta (compose) | sin definir: usa la BD local | Neon, cadena directa |
 | `ALLOWED_ORIGINS` | API | `http://localhost:5173` | URL de Cloudflare Pages |
 | `PORT` | API | 8000 | La pone Render |
 | `VITE_API_URL` | Frontend (build) | `http://localhost:8000` | URL `onrender.com` de la API |
@@ -426,7 +474,7 @@ Se usa la imagen con pgvector para que la fase 2 no obligue a cambiar de imagen.
 Queda preparado y documentado. No se ejecuta como parte de este trabajo.
 
 - **`render.yaml`**: servicio web, runtime Docker, plan `free`, región Frankfurt,
-  contexto `backend/`, `healthCheckPath: /health`, y `DATABASE_URL` y
+  `dockerfilePath` y `dockerContext` en `backend/`, `healthCheckPath: /health`, y `DATABASE_URL` y
   `ALLOWED_ORIGINS` con `sync: false`.
 - **Cloudflare Pages**: se configura en su panel. Directorio raíz `frontend`, comando
   `npm run build`, salida `dist`, variable `VITE_API_URL`.
@@ -445,11 +493,12 @@ pasar por PgBouncer.
 - **Parsers de la ingesta** (pytest, sin BD): línea de RV1909 con BOM, códigos de
   libro de eBible, referencia simple, rango dentro de un libro, rango entre libros,
   referencia a un versículo inexistente.
-- **API** (pytest contra el Postgres de compose, con un dataset mínimo de unas
-  decenas de versículos y aristas):
+- **API** (pytest contra el Postgres de compose, en una base de datos aparte
+  `bible_test` para no tocar los datos de desarrollo, con un dataset mínimo de una
+  docena de versículos y aristas):
   - orden de las semillas y límite `seeds`;
-  - búsqueda sin acentos ("fue" encuentra "fué") y con stemming ("perdón" encuentra
-    "perdonó");
+  - búsqueda sin acentos ("redencion" encuentra "redención") y con stemming ("perdón"
+    encuentra "perdonó");
   - límite `neighbors`;
   - filtro `min_weight`;
   - expansión en ambos sentidos;
@@ -458,7 +507,8 @@ pasar por PgBouncer.
   - sin resultados;
   - `/api/verses` con un versículo, con un rango, 404 y 422;
   - `/health` y `/health/db`.
-- **Frontend** (Vitest): la función de `graph.ts` que convierte la respuesta de la
-  API en elementos de Cytoscape.
+- **Frontend** (Vitest): las funciones de `graph.ts` (conversión de la respuesta de
+  la API en elementos de Cytoscape, grosor de arista, conexiones de un nodo) y la
+  construcción de URLs de `api.ts`.
 - **Verificación manual**: ingesta completa en local, búsqueda de "gracia" en el
   navegador, click en un nodo, click en una conexión con rango, los dos sliders.
