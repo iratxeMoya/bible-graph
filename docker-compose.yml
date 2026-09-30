@@ -48,6 +48,17 @@ services:
       - ./backend:/app
       - ingest-cache:/cache
 
+  frontend:
+    build:
+      context: ./frontend
+      target: dev
+    environment:
+      VITE_API_URL: http://localhost:8000
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+
 volumes:
   db-data:
   ingest-cache:
