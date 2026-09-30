@@ -15,6 +15,6 @@ class Settings:
     def from_env(cls) -> "Settings":
         origins = os.environ.get("ALLOWED_ORIGINS", DEFAULT_ORIGINS)
         return cls(
-            database_url=os.environ.get("DATABASE_URL", ""),
+            database_url=os.environ.get("DATABASE_URL", "").strip(),
             allowed_origins=[o.strip().rstrip("/") for o in origins.split(",") if o.strip()],
         )

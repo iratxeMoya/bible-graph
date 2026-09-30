@@ -55,7 +55,9 @@ curl https://bible-graph-api-xxxx.onrender.com/health      # {"status":"ok"}
 curl https://bible-graph-api-xxxx.onrender.com/health/db   # {"status":"ok"}
 ```
 
-Si `/health/db` devuelve 503, la `DATABASE_URL` está mal o la BD no tiene los datos.
+Si `/health/db` devuelve 503, el campo `detail` dice por qué: "Base de datos no
+disponible" (la `DATABASE_URL` está mal) o "La base de datos no tiene los datos
+cargados" (falta la ingesta del paso 2, o apunta a otra base de datos).
 
 ## 4. Frontend en Cloudflare Pages
 
@@ -93,6 +95,6 @@ Si `/health/db` devuelve 503, la `DATABASE_URL` está mal o la BD no tiene los d
 |---|---|
 | La web dice "No se pudo completar la búsqueda" y la consola del navegador habla de CORS | `ALLOWED_ORIGINS` no coincide exactamente con la URL de Pages |
 | La web busca en `localhost:8000` | Falta `VITE_API_URL` en Pages, o no se redesplegó tras ponerla |
-| `/health/db` devuelve 503 | `DATABASE_URL` incorrecta en Render |
-| La búsqueda no devuelve nada para ninguna palabra | La ingesta no se ejecutó contra esta BD |
+| `/health/db` devuelve 503 con "Base de datos no disponible" | `DATABASE_URL` incorrecta en Render |
+| `/health/db` devuelve 503 con "La base de datos no tiene los datos cargados" | La ingesta no se ejecutó contra esta BD |
 | La ingesta falla con un error de `unaccent` o de permisos | Se usó la cadena con pooling; usa la directa |

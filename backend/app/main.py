@@ -4,7 +4,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 import psycopg
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -13,6 +13,7 @@ from app.db import create_pool
 from app.routes import router
 
 HEALTH_DB_TIMEOUT_SECONDS = 3
+NOT_LOADED = "La base de datos no tiene los datos cargados"
 
 
 @asynccontextmanager
@@ -44,6 +45,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Cubre BD inaccesible, pool agotado (PoolTimeout) y statement_timeout (QueryCanceled).
         return JSONResponse(status_code=503, content={"detail": "Base de datos no disponible"})
 
+    @app.exception_handler(psycopg.errors.UndefinedTable)
+    @app.exception_handler(psycopg.errors.UndefinedObject)
+    async def database_not_loaded(request: Request, exc: psycopg.Error) -> JSONResponse:
+        # Faltan las tablas o la configuración de búsqueda: no se ha ejecutado la ingesta.
+        return JSONResponse(status_code=503, content={"detail": NOT_LOADED})
+
     @app.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok"}
@@ -51,7 +58,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/health/db")
     async def health_db(request: Request) -> dict[str, str]:
         async with request.app.state.pool.connection(timeout=HEALTH_DB_TIMEOUT_SECONDS) as conn:
-            await conn.execute("SELECT 1")
+            cur = await conn.execute("SELECT EXISTS (SELECT 1 FROM verses) AS loaded")
+            row = await cur.fetchone()
+        if not row["loaded"]:
+            raise HTTPException(503, NOT_LOADED)
         return {"status": "ok"}
 
     return app

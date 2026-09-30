@@ -11,6 +11,10 @@ MAX_NODES = 600
 # Las semillas se ordenan por relevancia léxica y, a igualdad, por los votos que
 # reciben como destino de referencias cruzadas: sin ese desempate, una palabra que
 # aparece una vez por versículo devolvería siempre los primeros versículos del Génesis.
+#
+# `walk` arrastra el peso de la arista por la que se llega a cada nodo. Si hay que
+# recortar a MAX_NODES, caen primero los nodos de mayor salto y, dentro de un salto,
+# los de menor peso: recortar por orden canónico dejaría fuera el Nuevo Testamento.
 NODES_SQL = """
 WITH RECURSIVE query AS (
   SELECT websearch_to_tsquery('es_unaccent', %(q)s) AS tsq
@@ -26,13 +30,13 @@ matches AS (
 seeds AS (
   SELECT id FROM matches ORDER BY rank DESC, votes DESC, id LIMIT %(seeds)s
 ),
-walk(id, hop) AS (
-  SELECT id, 0 FROM seeds
+walk(id, hop, weight) AS (
+  SELECT id, 0, NULL::integer FROM seeds
   UNION
-  SELECT n.id, w.hop + 1
+  SELECT n.id, w.hop + 1, n.weight
   FROM walk w
   CROSS JOIN LATERAL (
-    SELECT e.other AS id
+    SELECT e.other AS id, max(e.weight) AS weight
     FROM (
       SELECT to_verse_id AS other, weight FROM edges WHERE from_verse_id = w.id
       UNION ALL
@@ -46,10 +50,15 @@ walk(id, hop) AS (
   WHERE w.hop < %(hops)s
 ),
 reached AS (
-  SELECT id, min(hop) AS hop FROM walk GROUP BY id
+  SELECT DISTINCT ON (id) id, hop, weight
+  FROM walk
+  ORDER BY id, hop, weight DESC NULLS FIRST
 ),
 capped AS (
-  SELECT id, hop FROM reached ORDER BY hop, id LIMIT %(max_nodes)s
+  SELECT id, hop
+  FROM reached
+  ORDER BY hop, weight DESC NULLS FIRST, id
+  LIMIT %(max_nodes)s
 )
 SELECT c.id, c.hop, b.name_es, b.abbr_es, b.testament, v.chapter, v.verse, vt.text,
        (SELECT count(*) FROM matches) AS total_matches,

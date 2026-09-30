@@ -1,4 +1,4 @@
-from ingest.__main__ import check_counts, describe_target, main
+from ingest.__main__ import check_counts, database_url_from_env, describe_target, main
 
 
 def test_check_counts_accepts_the_expected_dataset():
@@ -20,3 +20,15 @@ def test_main_needs_database_url(monkeypatch, capsys):
     monkeypatch.delenv("DATABASE_URL", raising=False)
     assert main([]) == 2
     assert "DATABASE_URL" in capsys.readouterr().err
+
+
+def test_database_url_from_env_strips_whitespace(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "  postgresql://user:clave@host/db \n")
+    assert database_url_from_env() == "postgresql://user:clave@host/db"
+
+
+def test_database_url_from_env_treats_blank_as_missing(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "  \n")
+    assert database_url_from_env() is None
+    monkeypatch.delenv("DATABASE_URL")
+    assert database_url_from_env() is None

@@ -16,7 +16,7 @@ services:
       POSTGRES_PASSWORD: bible
       POSTGRES_DB: bible
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - db-data:/var/lib/postgresql/data
     healthcheck:
@@ -32,7 +32,7 @@ services:
       DATABASE_URL: postgresql://bible:bible@db:5432/bible
       ALLOWED_ORIGINS: http://localhost:5173
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     volumes:
       - ./backend:/app
 
@@ -55,7 +55,7 @@ services:
     environment:
       VITE_API_URL: http://localhost:8000
     ports:
-      - "5173:5173"
+      - "127.0.0.1:5173:5173"
     volumes:
       - ./frontend:/app
 

@@ -28,3 +28,8 @@ def test_settings_from_env_defaults(monkeypatch):
     settings = Settings.from_env()
     assert settings.database_url == ""
     assert settings.allowed_origins == ["http://localhost:5173"]
+
+
+def test_settings_from_env_strips_the_database_url(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "  postgresql://user:clave@host/db \n")
+    assert Settings.from_env().database_url == "postgresql://user:clave@host/db"

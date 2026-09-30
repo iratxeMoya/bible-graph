@@ -37,6 +37,11 @@ def describe_target(database_url: str) -> str:
     return f"{info.get('host', 'localhost')}/{info.get('dbname', '')}"
 
 
+def database_url_from_env() -> str | None:
+    """`DATABASE_URL` sin espacios ni saltos de línea sobrantes, o None si falta o está vacía."""
+    return os.environ.get("DATABASE_URL", "").strip() or None
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m ingest")
     parser.add_argument("--force-download", action="store_true")
@@ -45,7 +50,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    database_url = os.environ.get("DATABASE_URL")
+    database_url = database_url_from_env()
     if not database_url:
         print("Falta la variable de entorno DATABASE_URL", file=sys.stderr)
         return 2

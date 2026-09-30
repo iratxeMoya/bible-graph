@@ -235,7 +235,7 @@ eBible, nombre en español, abreviatura en español y testamento.
 | `GET` | `/api/search` | Busca semillas y devuelve el grafo expandido |
 | `GET` | `/api/verses/{id}?end={id}` | Texto de un versículo o de un rango |
 | `GET` | `/health` | 200 sin tocar la BD. Healthcheck de Render |
-| `GET` | `/health/db` | Ejecuta `SELECT 1`. 200 si va bien, 503 si falla |
+| `GET` | `/health/db` | Comprueba que la BD responde y tiene versículos cargados. 200 si va bien, 503 si no |
 
 `/health` no toca la BD a propósito: Render lo llama cada pocos segundos, y una
 consulta en cada llamada impediría que Neon se suspendiera.
@@ -301,8 +301,10 @@ Respuesta:
    mirando tanto `from_verse_id` como `to_verse_id`. Un vecino unido por aristas en
    los dos sentidos cuenta una sola vez, con el mayor de los dos pesos. Se detiene en `hops`. El salto
    de un nodo es el mínimo con el que se alcanza.
-3. **Recorte.** Si hay más de 600 nodos, se conservan los 600 de menor salto (a
-   igualdad de salto, por `verse_id`) y `truncated` es `true`.
+3. **Recorte.** Si hay más de 600 nodos, se conservan los 600 de menor salto y
+   `truncated` es `true`. A igualdad de salto se conservan los de mayor peso en la
+   arista por la que se llega a ellos, y después por `verse_id`. Recortar solo por
+   `verse_id` dejaría fuera sistemáticamente los vecinos del Nuevo Testamento.
 4. **Aristas.** Todas las aristas con `weight >= min_weight` cuyos dos extremos están
    entre los nodos devueltos.
 
@@ -355,7 +357,10 @@ Sin `end`, devuelve un versículo. Con `end`, devuelve los versículos con
 - Sin coincidencias, o consulta formada solo por palabras vacías ("de la", "fue"):
   200 con `nodes` y `edges` vacíos y `total_matches` 0.
 - `statement_timeout` de 5 s en las consultas de la API. Si se supera: 503.
-- BD inaccesible: 503.
+- BD inaccesible: 503 con `{"detail": "Base de datos no disponible"}`.
+- BD sin las tablas o sin versículos (no se ha hecho la ingesta): 503 con
+  `{"detail": "La base de datos no tiene los datos cargados"}`.
+- `DATABASE_URL` se usa sin los espacios ni saltos de línea de los extremos.
 
 ### Conexión a la BD
 
@@ -410,8 +415,9 @@ de React y `fetch`; sin librería de estado ni router. Interfaz en español.
 - Click en un nodo: muestra `ref`, `text` y la lista de sus conexiones dentro del
   grafo, ordenadas por peso. El resto del grafo se atenúa.
 - Click en una conexión de la lista: selecciona ese nodo.
-- Si la conexión es una arista con rango, al pulsarla se pide
-  `/api/verses/{target}?end={target_end_id}` y el panel muestra el pasaje completo.
+- Si la conexión es una arista con rango, lleva además un enlace "leer pasaje". Al
+  pulsarlo se pide `/api/verses/{target}?end={target_end_id}` y el panel muestra el
+  pasaje completo.
 - Click en el fondo del grafo: deselecciona y cierra el panel.
 
 ### Controles
@@ -447,6 +453,9 @@ de React y `fetch`; sin librería de estado ni router. Interfaz en español.
 | `ingest` | la de `api` | Perfil `tools`. Se lanza con `docker compose run --rm ingest`. Caché de descargas en un volumen |
 
 Se usa la imagen con pgvector para que la fase 2 no obligue a cambiar de imagen.
+
+Los tres puertos se publican solo en `127.0.0.1`: la BD local tiene credenciales
+triviales y no debe quedar accesible desde la red.
 
 ### Dockerfiles
 

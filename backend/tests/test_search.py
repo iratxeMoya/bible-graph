@@ -158,6 +158,15 @@ def test_truncation_keeps_the_lowest_hops(client, monkeypatch):
     assert all(s in node_ids and t in node_ids for s, t in edge_pairs(body))
 
 
+def test_truncation_keeps_the_most_connected_neighbors(client, monkeypatch):
+    # Vecinos de Romanos 3:24: Efesios 2:8 (40 votos), Tito 3:5 (30) y Salmos 32:1 (5).
+    # Salmos va antes en el canon, pero es el menos conectado: es el que debe caer.
+    monkeypatch.setattr(search, "MAX_NODES", 3)
+    body = get(client, q="redención")
+    assert body["truncated"] is True
+    assert ids(body) == {ROM_3_24, EPH_2_8, TIT_3_5}
+
+
 def test_query_is_trimmed(client):
     assert get(client, q="  redención  ")["query"] == "redención"
 
