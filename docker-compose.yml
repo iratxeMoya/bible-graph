@@ -1,0 +1,53 @@
+x-backend: &backend
+  build:
+    context: ./backend
+    args:
+      REQUIREMENTS: requirements-dev.txt
+  image: bible-graph-backend
+  depends_on:
+    db:
+      condition: service_healthy
+
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: bible
+      POSTGRES_PASSWORD: bible
+      POSTGRES_DB: bible
+    ports:
+      - "5432:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bible -d bible"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  api:
+    <<: *backend
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    environment:
+      DATABASE_URL: postgresql://bible:bible@db:5432/bible
+      ALLOWED_ORIGINS: http://localhost:5173
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+
+  # Se lanza a demanda: docker compose run --rm ingest
+  # Para cargar otra BD (Neon): INGEST_DATABASE_URL="postgresql://..." docker compose run --rm ingest
+  ingest:
+    <<: *backend
+    profiles: ["tools"]
+    command: python -m ingest
+    environment:
+      DATABASE_URL: ${INGEST_DATABASE_URL:-postgresql://bible:bible@db:5432/bible}
+    volumes:
+      - ./backend:/app
+      - ingest-cache:/cache
+
+volumes:
+  db-data:
+  ingest-cache:
