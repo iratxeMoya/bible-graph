@@ -36,6 +36,16 @@ export interface Passage {
   verses: PassageVerse[];
 }
 
+export interface Explanation {
+  other: number;
+  text: string | null;
+}
+
+export interface ExplanationsResponse {
+  verse: number;
+  explanations: Explanation[];
+}
+
 export interface SearchParams {
   q: string;
   seeds: number;
@@ -61,6 +71,11 @@ export function passageUrl(base: string, id: number, endId: number | null): stri
   return endId === null ? `${base}/api/verses/${id}` : `${base}/api/verses/${id}?end=${endId}`;
 }
 
+export function explanationsUrl(base: string, verse: number, others: number[]): string {
+  const query = new URLSearchParams({ verse: String(verse), others: others.join(",") });
+  return `${base}/api/explanations?${query}`;
+}
+
 const API_BASE = apiBase(import.meta.env?.VITE_API_URL);
 
 async function getJson<T>(url: string, signal: AbortSignal): Promise<T> {
@@ -81,4 +96,12 @@ export function fetchPassage(
   signal: AbortSignal,
 ): Promise<Passage> {
   return getJson<Passage>(passageUrl(API_BASE, id, endId), signal);
+}
+
+export function fetchExplanations(
+  verse: number,
+  others: number[],
+  signal: AbortSignal,
+): Promise<ExplanationsResponse> {
+  return getJson<ExplanationsResponse>(explanationsUrl(API_BASE, verse, others), signal);
 }
