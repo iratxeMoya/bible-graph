@@ -1,35 +1,75 @@
+import { ChevronRight, X } from "lucide-react";
 import type { GraphNode, Passage } from "../api";
 import type { Connection } from "../graph";
+import { groupOf, groupVar } from "../groups";
+import { snippet } from "../text";
+import { dotStyle } from "./Legend";
 
 export type PassageState =
   | { status: "loading"; label: string }
   | { status: "error"; label: string }
   | { status: "done"; label: string; passage: Passage };
 
+/** Frases de relación del versículo abierto: por ID del otro versículo. */
+export type ExplanationsState =
+  | { status: "loading" }
+  | { status: "done"; texts: Map<number, string | null> };
+
 interface Props {
   node: GraphNode;
+  nodes: Map<number, GraphNode>;
   connections: Connection[];
+  explanations: ExplanationsState;
   passage: PassageState | null;
   onSelectNode: (id: number) => void;
   onOpenPassage: (connection: Connection) => void;
   onClose: () => void;
 }
 
+function colorVar(node: GraphNode): string {
+  return node.is_seed ? "--accent" : groupVar(groupOf(node.id));
+}
+
+function Why({ connection, other, explanations }: {
+  connection: Connection;
+  other: GraphNode | undefined;
+  explanations: ExplanationsState;
+}) {
+  if (explanations.status === "loading") {
+    return (
+      <span className="why">
+        <span className="visually-hidden">Generando…</span>
+        <span className="skeleton" aria-hidden="true" />
+      </span>
+    );
+  }
+  const text = explanations.texts.get(connection.nodeId);
+  if (text) return <span className="why">{text}</span>;
+  return <span className="why quote">«{snippet(other?.text ?? "", 70)}»</span>;
+}
+
 export function VersePanel({
   node,
+  nodes,
   connections,
+  explanations,
   passage,
   onSelectNode,
   onOpenPassage,
   onClose,
 }: Props) {
   return (
-    <aside className="verse-panel">
-      <header>
-        <h2>{node.ref}</h2>
-        <button type="button" onClick={onClose} aria-label="Cerrar">
-          ×
-        </button>
+    <aside className="verse-panel" aria-label={`Versículo ${node.ref}`}>
+      <button type="button" className="close" onClick={onClose} aria-label="Cerrar">
+        <X size={18} />
+      </button>
+      <header className="panel-header">
+        <i className="dot" style={dotStyle(colorVar(node))} />
+        <div>
+          <h2>{node.ref}</h2>
+          <p className="group">{groupOf(node.id).name}</p>
+        </div>
+        {node.is_seed && <span className="badge">Semilla</span>}
       </header>
       <p className="verse-text">{node.text}</p>
 
@@ -47,33 +87,41 @@ export function VersePanel({
         </section>
       )}
 
-      <h3>Conexiones ({connections.length})</h3>
-      {connections.length === 0 && <p className="muted">Sin conexiones en este grafo.</p>}
-      <ul className="connections">
-        {connections.map((connection) => (
-          <li key={connection.key}>
-            <button
-              type="button"
-              onClick={() => onSelectNode(connection.nodeId)}
-              title={
-                connection.direction === "out"
-                  ? `${node.ref} remite a ${connection.label}`
-                  : `${connection.label} remite a ${node.ref}`
-              }
-            >
-              <span aria-hidden="true">{connection.direction === "out" ? "→" : "←"}</span>{" "}
-              {connection.label}
-            </button>
-            {connection.rangeEndId !== null && (
-              <button type="button" className="link" onClick={() => onOpenPassage(connection)}>
-                leer pasaje
+      <h3 className="relations-title">
+        <span>Relaciones</span>
+        <span>{connections.length}</span>
+      </h3>
+      {connections.length === 0 && <p className="muted relations-title">Sin relaciones en este grafo.</p>}
+      <ul className="relations">
+        {connections.map((connection) => {
+          const other = nodes.get(connection.nodeId);
+          const [from, to] =
+            connection.direction === "out" ? [node.label, connection.label] : [connection.label, node.label];
+          return (
+            <li key={connection.key}>
+              <button
+                type="button"
+                className="relation"
+                onClick={() => onSelectNode(connection.nodeId)}
+                title={`${from} remite a ${to} · ${connection.weight} votos en OpenBible`}
+              >
+                <i className="dot" style={dotStyle(other ? colorVar(other) : "--muted")} />
+                <span className="body">
+                  <span className="ref">{connection.label}</span>
+                  <Why connection={connection} other={other} explanations={explanations} />
+                </span>
+                <ChevronRight size={16} className="chevron" aria-hidden="true" />
               </button>
-            )}
-            <span className="weight" title="Votos en OpenBible">
-              {connection.weight}
-            </span>
-          </li>
-        ))}
+              {connection.rangeEndId !== null && (
+                <div className="relation-extra">
+                  <button type="button" onClick={() => onOpenPassage(connection)}>
+                    leer pasaje
+                  </button>
+                </div>
+              )}
+            </li>
+          );
+        })}
       </ul>
     </aside>
   );

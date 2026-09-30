@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { fetchPassage, searchGraph, type SearchResponse } from "./api";
+import { fetchExplanations, fetchPassage, searchGraph, type SearchResponse } from "./api";
 import { GraphView } from "./components/GraphView";
-import { DEFAULT_LIMITS, LimitControls, type Limits } from "./components/LimitControls";
-import { MIN_QUERY_LENGTH, SearchBar } from "./components/SearchBar";
-import { type PassageState, VersePanel } from "./components/VersePanel";
-import { type Connection, connectionsOf } from "./graph";
+import { MIN_QUERY_LENGTH } from "./components/SearchBar";
+import { DEFAULT_LIMITS, type Limits, Sidebar } from "./components/Sidebar";
+import { TopBar } from "./components/TopBar";
+import { type ExplanationsState, type PassageState, VersePanel } from "./components/VersePanel";
+import { type Connection, explanationTargets, relationsOf } from "./graph";
+import { applyTheme, readTheme, type Theme } from "./theme";
 
 const LIMITS_DEBOUNCE_MS = 300;
 const SLOW_AFTER_MS = 5000;
@@ -17,6 +19,14 @@ type Search =
 
 function initialQuery(): string {
   return new URLSearchParams(window.location.search).get("q")?.trim() ?? "";
+}
+
+function browserStorage(): Storage | undefined {
+  try {
+    return window.localStorage;
+  } catch {
+    return undefined;
+  }
 }
 
 function useDebounced<T>(value: T, delayMs: number): T {
@@ -36,7 +46,22 @@ export function App() {
   const [search, setSearch] = useState<Search>({ status: "idle" });
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [passage, setPassage] = useState<PassageState | null>(null);
+  const [explanations, setExplanations] = useState<ExplanationsState>({ status: "loading" });
+  const [theme, setTheme] = useState<Theme>(() => {
+    const initial = readTheme(browserStorage());
+    applyTheme(browserStorage(), initial);
+    return initial;
+  });
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const passageRequest = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSelectedId(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   useEffect(() => {
     if (query.length < MIN_QUERY_LENGTH) {
@@ -76,6 +101,34 @@ export function App() {
     setPassage(null);
   }, [selectedId]);
 
+  const response = search.status === "done" ? search.response : null;
+  const nodes = useMemo(() => new Map((response?.nodes ?? []).map((n) => [n.id, n])), [response]);
+  const selectedNode = selectedId === null ? null : (nodes.get(selectedId) ?? null);
+  const connections = useMemo(
+    () => (response && selectedId !== null ? relationsOf(selectedId, response) : []),
+    [response, selectedId],
+  );
+  const targets = useMemo(() => explanationTargets(connections), [connections]);
+
+  // Frases de relación: se piden al abrir un versículo. La primera vez las genera Ollama.
+  useEffect(() => {
+    if (selectedId === null || targets.length === 0) return;
+    const controller = new AbortController();
+    setExplanations({ status: "loading" });
+    fetchExplanations(selectedId, targets, controller.signal)
+      .then((result) => {
+        if (controller.signal.aborted) return;
+        setExplanations({
+          status: "done",
+          texts: new Map(result.explanations.map((e) => [e.other, e.text])),
+        });
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setExplanations({ status: "done", texts: new Map() });
+      });
+    return () => controller.abort();
+  }, [selectedId, targets]);
+
   function runSearch(next: string) {
     const url = new URL(window.location.href);
     url.searchParams.set("q", next);
@@ -101,89 +154,68 @@ export function App() {
       });
   }
 
-  const response = search.status === "done" ? search.response : null;
-  const selectedNode = useMemo(
-    () => response?.nodes.find((node) => node.id === selectedId) ?? null,
-    [response, selectedId],
-  );
-  const connections = useMemo(
-    () => (response && selectedId !== null ? connectionsOf(selectedId, response) : []),
-    [response, selectedId],
-  );
-  const seedCount = response?.nodes.filter((node) => node.is_seed).length ?? 0;
-
   return (
     <div className="app">
-      <header className="top-bar">
-        <h1>Grafo bíblico</h1>
-        <SearchBar query={query} onSearch={runSearch} />
-        <LimitControls limits={limits} onChange={setLimits} />
-      </header>
+      <TopBar
+        query={query}
+        onSearch={runSearch}
+        theme={theme}
+        onToggleTheme={() => {
+          const next = theme === "dark" ? "light" : "dark";
+          applyTheme(browserStorage(), next);
+          setTheme(next);
+        }}
+        onToggleSidebar={() => setSidebarOpen((open) => !open)}
+      />
+      <Sidebar limits={limits} onChange={setLimits} response={response} open={sidebarOpen} />
 
-      <main className="workspace">
-        <section className="graph-area">
-          {search.status === "idle" && (
-            <p className="message">
-              Escribe un término o concepto para ver los versículos relacionados y sus conexiones.
-            </p>
-          )}
-          {search.status === "loading" && (
-            <p className="message">
-              Buscando…
-              {search.slow && <span> La API puede tardar hasta un minuto en despertar.</span>}
-            </p>
-          )}
-          {search.status === "error" && (
-            <p className="message">
-              No se pudo completar la búsqueda.{" "}
-              <button type="button" onClick={() => setAttempt((n) => n + 1)}>
-                Reintentar
-              </button>
-            </p>
-          )}
-          {response && response.nodes.length === 0 && (
-            <p className="message">No hay versículos que contengan «{response.query}».</p>
-          )}
-          {response && response.nodes.length > 0 && (
-            <GraphView response={response} selectedId={selectedId} onSelect={setSelectedId} />
-          )}
-        </section>
-
-        {selectedNode && (
-          <VersePanel
-            node={selectedNode}
-            connections={connections}
-            passage={passage}
-            onSelectNode={setSelectedId}
-            onOpenPassage={openPassage}
-            onClose={() => setSelectedId(null)}
+      <main className="graph-area">
+        {search.status === "idle" && (
+          <p className="message">
+            Escribe un término o concepto para ver los pasajes que lo contienen y cómo se
+            conectan con el resto de la Biblia.
+          </p>
+        )}
+        {search.status === "loading" && (
+          <p className="message">
+            Buscando…
+            {search.slow && <span> La API puede tardar hasta un minuto en despertar.</span>}
+          </p>
+        )}
+        {search.status === "error" && (
+          <p className="message">
+            No se pudo completar la búsqueda.
+            <br />
+            <button type="button" onClick={() => setAttempt((n) => n + 1)}>
+              Reintentar
+            </button>
+          </p>
+        )}
+        {response && response.nodes.length === 0 && (
+          <p className="message">No hay versículos que contengan «{response.query}».</p>
+        )}
+        {response && response.nodes.length > 0 && (
+          <GraphView
+            response={response}
+            theme={theme}
+            selectedId={selectedId}
+            onSelect={setSelectedId}
           />
         )}
       </main>
 
-      <footer className="status-bar">
-        {response && response.nodes.length > 0 && (
-          <span>
-            {seedCount} de {response.total_matches} coincidencias · {response.nodes.length} nodos
-            {response.truncated && " · Grafo recortado a 600 nodos"}
-          </span>
-        )}
-        <span className="legend">
-          <i className="dot seed" /> Coincidencia <i className="dot at" /> AT{" "}
-          <i className="dot nt" /> NT
-        </span>
-        <span>
-          Referencias cruzadas de{" "}
-          <a
-            href="https://www.openbible.info/labs/cross-references/"
-            target="_blank"
-            rel="noreferrer"
-          >
-            OpenBible.info
-          </a>{" "}
-          (CC-BY) · Texto: Reina-Valera 1909 (dominio público)
-        </span>
-      </footer>
+      {selectedNode && (
+        <VersePanel
+          node={selectedNode}
+          nodes={nodes}
+          connections={connections}
+          explanations={targets.length === 0 ? { status: "done", texts: new Map() } : explanations}
+          passage={passage}
+          onSelectNode={setSelectedId}
+          onOpenPassage={openPassage}
+          onClose={() => setSelectedId(null)}
+        />
+      )}
     </div>
   );
 }
