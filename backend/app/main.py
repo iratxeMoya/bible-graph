@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 
 from app.config import Settings
 from app.db import create_pool
+from app.routes import router
 
 HEALTH_DB_TIMEOUT_SECONDS = 3
 
@@ -36,6 +37,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_methods=["GET"],
         allow_headers=["*"],
     )
+    app.include_router(router)
 
     @app.exception_handler(psycopg.OperationalError)
     async def database_unavailable(request: Request, exc: psycopg.OperationalError) -> JSONResponse:
