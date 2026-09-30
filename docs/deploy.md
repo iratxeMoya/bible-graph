@@ -38,7 +38,27 @@ Aristas cargadas:    344542
 Aristas descartadas: 257 (apuntan a versículos que no existen en RV1909)
 ```
 
-La ingesta se puede repetir las veces que haga falta: reemplaza todo el contenido.
+La ingesta se puede repetir las veces que haga falta: reemplaza los versículos y las
+referencias, y conserva las frases de relación ya generadas. Vuelve a ejecutarla también
+cuando una versión nueva añada tablas al esquema.
+
+En PowerShell (Windows) la variable se define antes del comando:
+
+```powershell
+$env:INGEST_DATABASE_URL = "<cadena directa de Neon>"; docker compose run --rm ingest
+```
+
+### Frases de relación en la web publicada
+
+Render no puede ejecutar Ollama, así que la web publicada solo muestra las frases que
+ya estén en la base de datos; en las demás relaciones enseña el comienzo del versículo.
+Para llevar frases a Neon, genéralas desde tu máquina con Ollama en marcha:
+
+```bash
+INGEST_DATABASE_URL="<cadena directa de Neon>" docker compose run --rm ingest python -m ingest.explain --limit 5000
+```
+
+Las más votadas van primero. Se puede interrumpir y reanudar.
 
 ## 3. API en Render
 
@@ -47,6 +67,8 @@ La ingesta se puede repetir las veces que haga falta: reemplaza todo el contenid
 2. Rellena las dos variables que pide:
    - `DATABASE_URL`: la cadena **con pooling** de Neon.
    - `ALLOWED_ORIGINS`: de momento `http://localhost:5173`. Se cambia en el paso 5.
+
+   No definas `OLLAMA_URL` en Render: sin ella la API solo lee las frases guardadas.
 3. Cuando termine el despliegue, copia la URL del servicio
    (`https://bible-graph-api-xxxx.onrender.com`) y comprueba:
 

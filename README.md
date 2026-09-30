@@ -11,11 +11,14 @@ por referencias cruzadas.
 
 ## Arrancar en local
 
-Solo hace falta Docker.
+Hace falta Docker. Para las frases que explican cada relación, también
+[Ollama](https://ollama.com) en la misma máquina con el modelo `gemma4:e4b`
+(`ollama pull gemma4:e4b`); sin Ollama la app funciona igual y muestra el comienzo del
+versículo relacionado en lugar de la frase.
 
 ```bash
 docker compose up -d --build        # BD, API y frontend
-docker compose run --rm ingest      # carga los datos (solo la primera vez)
+docker compose run --rm ingest      # carga los datos (la primera vez y tras cambios de esquema)
 ```
 
 Abre <http://localhost:5173> y busca "gracia".
@@ -25,6 +28,10 @@ Abre <http://localhost:5173> y busca "gracia".
 | Frontend | <http://localhost:5173> |
 | API | <http://localhost:8000> (documentación en `/docs`) |
 | Postgres | `localhost:5432`, usuario, clave y base de datos `bible` |
+
+Si alguno de esos puertos está ocupado, crea un fichero `.env` junto a
+`docker-compose.yml` con otros valores (`DB_PORT`, `API_PORT`, `FRONTEND_PORT`; ver
+[.env.example](.env.example)) y abre el frontend en el puerto que hayas elegido.
 
 ## Cómo se busca
 
@@ -36,9 +43,24 @@ Abre <http://localhost:5173> y busca "gracia".
 - `OR` busca cualquiera de las dos: `gracia OR misericordia`.
 - Las palabras muy comunes ("de", "la", "fue") no se buscan.
 
-Los versículos que contienen el término son las semillas. El grafo añade, para cada
-una, sus versículos más conectados. Los deslizadores **Semillas** y **Vecinos**
-controlan cuántos.
+Los versículos que contienen el término son las semillas y rodean al término, en el
+centro. El grafo añade, para cada una, sus versículos más conectados. Los deslizadores
+**Semillas** y **Vecinos** controlan cuántos. Los colores indican el tipo de libro.
+
+## Frases de relación
+
+Al abrir un versículo, el panel explica en una frase cada una de sus relaciones. Las
+frases las escribe un modelo local de Ollama la primera vez (unos 5 segundos, o unos 15
+si el modelo no estaba cargado) y quedan guardadas en la base de datos.
+
+Para generarlas por adelantado, de las referencias más votadas a las menos (unas 11.000
+por hora con una GPU de portátil):
+
+```bash
+docker compose run --rm ingest python -m ingest.explain --limit 5000
+```
+
+Se puede interrumpir con Ctrl+C y volver a lanzar: continúa donde lo dejó.
 
 ## Tests
 
@@ -51,8 +73,8 @@ docker compose exec frontend npm run build  # tipos y build de producción
 ## Estructura
 
 ```
-backend/app/      API: búsqueda, expansión del grafo, lectura de pasajes
-backend/ingest/   Descarga y carga de los datos (python -m ingest)
+backend/app/      API: búsqueda, expansión del grafo, pasajes y frases de relación
+backend/ingest/   Carga de los datos (python -m ingest) y frases en lote (ingest.explain)
 backend/sql/      Esquema de la base de datos
 frontend/src/     Interfaz: búsqueda, grafo y panel del versículo
 docs/             Guía de despliegue, diseño y plan
