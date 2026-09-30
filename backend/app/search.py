@@ -3,7 +3,7 @@
 from psycopg import AsyncConnection
 
 from app.refs import format_ref
-from app.schemas import Edge, Node, SearchResponse
+from app.schemas import Edge, Node, PassageResponse, SearchResponse, Verse
 
 TRANSLATION = "RV1909"
 MAX_NODES = 600
@@ -130,4 +130,45 @@ async def search_graph(
         truncated=node_rows[0]["total_reached"] > len(nodes),
         nodes=nodes,
         edges=edges,
+    )
+
+
+MAX_PASSAGE_VERSES = 200
+
+PASSAGE_SQL = """
+SELECT v.id, b.name_es, v.chapter, v.verse, vt.text
+FROM verses v
+JOIN books b ON b.id = v.book_id
+JOIN verse_texts vt ON vt.verse_id = v.id AND vt.translation = %(translation)s
+WHERE v.id BETWEEN %(start)s AND %(end)s
+ORDER BY v.id
+LIMIT %(limit)s
+"""
+
+
+class PassageTooLong(Exception):
+    pass
+
+
+async def get_passage(conn: AsyncConnection, start: int, end: int) -> PassageResponse | None:
+    """Devuelve los versículos entre `start` y `end`, o None si `start` no existe."""
+    cur = await conn.execute(
+        PASSAGE_SQL,
+        {"translation": TRANSLATION, "start": start, "end": end, "limit": MAX_PASSAGE_VERSES + 1},
+    )
+    rows = await cur.fetchall()
+    if not rows or rows[0]["id"] != start:
+        return None
+    if len(rows) > MAX_PASSAGE_VERSES:
+        raise PassageTooLong
+    first, last = rows[0], rows[-1]
+    return PassageResponse(
+        ref=format_ref(
+            first["name_es"], first["chapter"], first["verse"],
+            last["name_es"], last["chapter"], last["verse"],
+        ),
+        verses=[
+            Verse(id=r["id"], ref=format_ref(r["name_es"], r["chapter"], r["verse"]), text=r["text"])
+            for r in rows
+        ],
     )

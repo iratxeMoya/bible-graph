@@ -30,3 +30,14 @@ class SearchResponse(BaseModel):
     truncated: bool
     nodes: list[Node]
     edges: list[Edge]
+
+
+class Verse(BaseModel):
+    id: int
+    ref: str
+    text: str
+
+
+class PassageResponse(BaseModel):
+    ref: str
+    verses: list[Verse]
