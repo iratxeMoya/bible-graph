@@ -234,7 +234,28 @@ para que `host.docker.internal` resuelva también en Linux.
 Referencia de ritmo medido: unos 4,6 s por lote de 8, es decir unas 6.000 frases por
 hora.
 
-## 5. Tests
+## 5. Ajustes descubiertos al prototipar
+
+El diseño se probó de punta a punta antes de planificar. Estos puntos lo completan:
+
+- **Una fila por versículo relacionado.** Si hay referencia en los dos sentidos, el panel
+  muestra una sola fila, con el mayor de los dos pesos y el rango si alguna la tiene.
+- **"Ambos textos…".** El modelo empieza muchas frases así aunque el prompt lo prohíba.
+  La limpieza de frases quita ese arranque ("Ambos textos hablan de…" → "Hablan de…") y
+  pone la primera letra en mayúscula.
+- **Tema y colores del grafo.** El tema se aplica al documento antes de pintar el
+  grafo, porque Cytoscape lee sus colores de las variables CSS.
+- **Nodo seleccionado bajo el panel.** Al abrirse el panel el lienzo se estrecha; si el
+  nodo queda fuera de la vista, se centra con una animación.
+- **Vecinos del seleccionado.** Muestran solo la referencia, sin fragmento, para que
+  las etiquetas no se solapen.
+- **Windows.** El repositorio fija finales de línea LF (`.gitattributes`); los puertos
+  del host son configurables (`DB_PORT`, `API_PORT`, `FRONTEND_PORT`); y la API y Vite
+  vigilan los ficheros por sondeo, porque con Docker Desktop los contenedores no reciben
+  los eventos de cambio.
+- **Ritmo real de pregeneración:** unas 11.000 frases por hora, no 6.000.
+
+## 6. Tests
 
 - **Backend (pytest):**
   - frases guardadas se devuelven sin llamar al generador;
