@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { apiBase, explanationsUrl, passageUrl, searchUrl, type SearchResponse } from "./api";
 import {
+  chunks,
   connectionsOf,
+  EXPLANATION_CHUNK,
   edgeWidth,
   explanationTargets,
   MAX_EXPLANATIONS,
@@ -185,5 +187,17 @@ describe("relationsOf", () => {
     expect(relationsOf(ROM, withRange)).toEqual([
       { key: `in-e${TIT}-${ROM}`, nodeId: TIT, label: "Tit 3:5-7", weight: 60, direction: "in", rangeEndId: TIT_END },
     ]);
+  });
+});
+
+describe("chunks", () => {
+  it("splits a list into groups of the given size, keeping the order", () => {
+    expect(chunks([1, 2, 3, 4, 5], 2)).toEqual([[1, 2], [3, 4], [5]]);
+    expect(chunks([], 8)).toEqual([]);
+    expect(chunks([1, 2], 8)).toEqual([[1, 2]]);
+  });
+
+  it("asks for the explanations of a verse in groups of 8", () => {
+    expect(EXPLANATION_CHUNK).toBe(8);
   });
 });

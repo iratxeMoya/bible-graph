@@ -1,8 +1,12 @@
+import asyncio
+
 import psycopg
 import pytest
 from fastapi.testclient import TestClient
 
+from app import explanations
 from app.config import Settings
+from app.db import create_pool
 from app.main import create_app
 from tests.data import EPH_2_8, GEN_1_1, PS_32_1, ROM_3_24, TIT_3_5
 from tests.fakes import FakeGenerator
@@ -149,3 +153,70 @@ def test_app_uses_ollama_only_when_configured(database_url):
     without = create_app(Settings(database_url=database_url, allowed_origins=[]))
     assert with_ollama.state.generator.model == "gemma4:e4b"
     assert without.state.generator is None
+
+
+@pytest.fixture
+def self_reference(database_url):
+    """Una referencia de un versículo a sí mismo, como Mateo 5:3 → Mateo 5:3-12 en los datos reales."""
+    with psycopg.connect(database_url) as conn:
+        conn.execute(
+            "INSERT INTO edges (from_verse_id, to_verse_id, weight) VALUES (%s, %s, 5)",
+            (ROM_3_24, ROM_3_24),
+        )
+    yield
+    with psycopg.connect(database_url) as conn:
+        conn.execute(
+            "DELETE FROM edges WHERE from_verse_id = %s AND to_verse_id = %s", (ROM_3_24, ROM_3_24)
+        )
+
+
+def test_self_reference_gets_no_phrase_and_does_not_break_the_others(database_url, self_reference):
+    generator = FakeGenerator()
+    with make_client(database_url, generator) as client:
+        texts = explain(client, ROM_3_24, ROM_3_24, EPH_2_8)
+    assert texts == {
+        ROM_3_24: None,
+        EPH_2_8: "Frase de prueba que une Romanos 3:24 con Efesios 2:8.",
+    }
+    assert [len(call) for call in generator.calls] == [1]
+
+
+class FlakyGenerator(FakeGenerator):
+    """Falla en la segunda llamada y funciona en las demás."""
+
+    def generate(self, pairs):
+        self.calls.append(pairs)
+        if len(self.calls) == 2:
+            raise RuntimeError("se cayó a mitad")
+        return [f"Frase de prueba que une {p.a_ref} con {p.b_ref}." for p in pairs]
+
+
+def test_phrases_are_generated_in_chunks_and_each_chunk_is_kept(database_url, monkeypatch):
+    monkeypatch.setattr(explanations, "GENERATION_CHUNK", 1)
+    generator = FlakyGenerator()
+    with make_client(database_url, generator) as client:
+        texts = explain(client, ROM_3_24, EPH_2_8, TIT_3_5, PS_32_1)
+    assert [len(call) for call in generator.calls] == [1, 1, 1]
+    assert sum(text is not None for text in texts.values()) == 2
+    assert len(stored(database_url)) == 2
+
+
+def test_cancelled_request_does_not_generate(database_url):
+    generator = FakeGenerator()
+
+    async def cancelled():
+        return True
+
+    async def run():
+        pool = create_pool(database_url)
+        await pool.open()
+        try:
+            return await explanations.explain(
+                pool, generator, ROM_3_24, [EPH_2_8], cancelled=cancelled
+            )
+        finally:
+            await pool.close()
+
+    result = asyncio.run(run())
+    assert result.explanations[0].text is None
+    assert generator.calls == []

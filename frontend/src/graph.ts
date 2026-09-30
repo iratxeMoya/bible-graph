@@ -6,6 +6,8 @@ import { capitalize, snippet } from "./text";
 /** ID del nodo central con el término buscado. Los versículos usan su ID numérico. */
 export const TERM_ID = "term";
 export const MAX_EXPLANATIONS = 30;
+/** Relaciones por petición de frases: cada trozo se muestra en cuanto llega. */
+export const EXPLANATION_CHUNK = 8;
 
 const MIN_EDGE_WIDTH = 0.6;
 const MAX_EDGE_WIDTH = 4;
@@ -131,4 +133,13 @@ export function relationsOf(nodeId: number, response: SearchResponse): Connectio
 /** Versículos cuya frase se pide a la API: sin repetir, en el orden del panel y como máximo 30. */
 export function explanationTargets(connections: Connection[]): number[] {
   return [...new Set(connections.map((c) => c.nodeId))].slice(0, MAX_EXPLANATIONS);
+}
+
+/** Parte una lista en grupos de `size` elementos, en orden. */
+export function chunks<T>(items: T[], size: number): T[][] {
+  const groups: T[][] = [];
+  for (let start = 0; start < items.length; start += size) {
+    groups.push(items.slice(start, start + size));
+  }
+  return groups;
 }

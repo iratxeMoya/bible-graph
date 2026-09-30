@@ -78,5 +78,10 @@ async def explanations_endpoint(
     others: Annotated[str, Query(max_length=400)],
 ) -> ExplanationsResponse:
     return await explanations.explain(
-        pool, request.app.state.generator, verse, parse_ids(others)
+        pool,
+        request.app.state.generator,
+        verse,
+        parse_ids(others),
+        lock=getattr(request.app.state, "generation_lock", None),
+        cancelled=request.is_disconnected,
     )

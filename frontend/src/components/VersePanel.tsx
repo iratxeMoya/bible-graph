@@ -10,10 +10,12 @@ export type PassageState =
   | { status: "error"; label: string }
   | { status: "done"; label: string; passage: Passage };
 
-/** Frases de relación del versículo abierto: por ID del otro versículo. */
-export type ExplanationsState =
-  | { status: "loading" }
-  | { status: "done"; texts: Map<number, string | null> };
+/** Frases de relación de un versículo: las recibidas y las que aún se están pidiendo. */
+export interface ExplanationsState {
+  verse: number;
+  texts: Map<number, string | null>;
+  pending: Set<number>;
+}
 
 interface Props {
   node: GraphNode;
@@ -31,11 +33,14 @@ function colorVar(node: GraphNode): string {
 }
 
 function Why({ connection, other, explanations }: {
-  connection: Connection;
+  connection: Connection & { fromId: number };
   other: GraphNode | undefined;
   explanations: ExplanationsState;
 }) {
-  if (explanations.status === "loading") {
+  // Mientras llegan las del versículo abierto, las de otro versículo no se muestran.
+  const pending =
+    explanations.verse !== connection.fromId || explanations.pending.has(connection.nodeId);
+  if (pending) {
     return (
       <span className="why">
         <span className="visually-hidden">Generando…</span>
@@ -108,7 +113,11 @@ export function VersePanel({
                 <i className="dot" style={dotStyle(other ? colorVar(other) : "--muted")} />
                 <span className="body">
                   <span className="ref">{connection.label}</span>
-                  <Why connection={connection} other={other} explanations={explanations} />
+                  <Why
+                    connection={{ ...connection, fromId: node.id }}
+                    other={other}
+                    explanations={explanations}
+                  />
                 </span>
                 <ChevronRight size={16} className="chevron" aria-hidden="true" />
               </button>

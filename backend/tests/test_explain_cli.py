@@ -77,3 +77,18 @@ def test_main_needs_database_url(monkeypatch, capsys):
     monkeypatch.delenv("DATABASE_URL", raising=False)
     assert main([]) == 2
     assert "DATABASE_URL" in capsys.readouterr().err
+
+
+def test_run_stops_after_three_failed_batches_in_a_row(conn):
+    generator = FakeGenerator(error=RuntimeError("Ollama apagado"))
+    progress = run(conn, generator, limit=100, batch=1)
+    assert len(generator.calls) == 3
+    assert progress.stopped is True
+    assert (progress.generated, progress.discarded) == (0, 3)
+
+
+def test_main_fails_when_ollama_does_not_answer(conn, database_url, monkeypatch, capsys):
+    monkeypatch.setenv("DATABASE_URL", database_url)
+    monkeypatch.setenv("OLLAMA_URL", "http://127.0.0.1:1")
+    assert main(["--limit", "5", "--batch", "1"]) == 1
+    assert "Ollama no responde" in capsys.readouterr().err

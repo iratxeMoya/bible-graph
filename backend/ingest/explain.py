@@ -42,10 +42,15 @@ LIMIT %(limit)s
 """
 
 
+MAX_FAILED_BATCHES = 3
+
+
 @dataclass
 class Progress:
     generated: int = 0
     discarded: int = 0
+    # True si se paró porque el modelo falló MAX_FAILED_BATCHES lotes seguidos.
+    stopped: bool = False
 
 
 def pending(conn: psycopg.Connection, skip: set[tuple[int, int]], limit: int) -> list[tuple[int, int]]:
@@ -64,6 +69,7 @@ def run(
     """Genera hasta `limit` frases. Los pares descartados no se reintentan en esta ejecución."""
     progress = Progress()
     skip: set[tuple[int, int]] = set()
+    failed_in_a_row = 0
     while progress.generated < limit:
         keys = pending(conn, skip, min(batch, limit - progress.generated))
         if not keys:
@@ -75,9 +81,11 @@ def run(
         }
         try:
             raw = generator.generate([verse_pair(key, texts) for key in keys])
+            failed_in_a_row = 0
         except Exception as error:  # noqa: BLE001
             print(f"Lote descartado: {error}", file=sys.stderr)
             raw = [""] * len(keys)
+            failed_in_a_row += 1
         rows = []
         for key, text in zip(keys, (clean_phrase(r) for r in raw)):
             if text is None:
@@ -90,6 +98,9 @@ def run(
         conn.commit()
         progress.generated += len(rows)
         report(progress)
+        if failed_in_a_row >= MAX_FAILED_BATCHES:
+            progress.stopped = True
+            break
     return progress
 
 
@@ -127,6 +138,13 @@ def main(argv: list[str] | None = None) -> int:
         except KeyboardInterrupt:
             print("Interrumpido. Lo generado hasta ahora queda guardado.")
             return 130
+    if progress.stopped:
+        print(
+            f"Ollama no responde en {ollama_url} ({MAX_FAILED_BATCHES} lotes seguidos fallidos)."
+            " ¿Está en marcha y con el modelo descargado?",
+            file=sys.stderr,
+        )
+        return 1
     print(f"Terminado: {progress.generated} frases nuevas, {progress.discarded} descartadas.")
     return 0
 

@@ -255,6 +255,20 @@ El diseño se probó de punta a punta antes de planificar. Estos puntos lo compl
   los eventos de cambio.
 - **Ritmo real de pregeneración:** unas 11.000 frases por hora, no 6.000.
 
+### Cambios tras la revisión final
+
+- **Trozos de 8, no una sola llamada.** Con 30 relaciones de golpe el modelo tardaba
+  unos 52 s y, si devolvía un número de frases distinto, no se guardaba ninguna. El
+  frontend pide las frases en grupos de 8, una petición tras otra, y muestra cada grupo
+  en cuanto llega. El backend también genera en trozos de 8 y guarda cada uno al
+  terminarlo.
+- **Generaciones de una en una.** Una sola generación a la vez por API (Ollama las
+  atiende así). Si quien pidió ya cerró la conexión, su generación no se hace.
+- **Referencias de un versículo a sí mismo** (45 en los datos, como Mateo 5:3 →
+  Mateo 5:3-12): no llevan frase. Antes provocaban un 500 y se perdía todo el lote.
+- **Pregeneración con el modelo caído:** `ingest.explain` se detiene con código 1 tras
+  3 lotes fallidos seguidos, en lugar de recorrer todos los pares.
+
 ## 6. Tests
 
 - **Backend (pytest):**

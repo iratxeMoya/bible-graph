@@ -5,7 +5,13 @@ import { MIN_QUERY_LENGTH } from "./components/SearchBar";
 import { DEFAULT_LIMITS, type Limits, Sidebar } from "./components/Sidebar";
 import { TopBar } from "./components/TopBar";
 import { type ExplanationsState, type PassageState, VersePanel } from "./components/VersePanel";
-import { type Connection, explanationTargets, relationsOf } from "./graph";
+import {
+  chunks,
+  type Connection,
+  EXPLANATION_CHUNK,
+  explanationTargets,
+  relationsOf,
+} from "./graph";
 import { applyTheme, readTheme, type Theme } from "./theme";
 
 const LIMITS_DEBOUNCE_MS = 300;
@@ -46,7 +52,11 @@ export function App() {
   const [search, setSearch] = useState<Search>({ status: "idle" });
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [passage, setPassage] = useState<PassageState | null>(null);
-  const [explanations, setExplanations] = useState<ExplanationsState>({ status: "loading" });
+  const [explanations, setExplanations] = useState<ExplanationsState>({
+    verse: 0,
+    texts: new Map(),
+    pending: new Set(),
+  });
   const [theme, setTheme] = useState<Theme>(() => {
     const initial = readTheme(browserStorage());
     applyTheme(browserStorage(), initial);
@@ -110,22 +120,31 @@ export function App() {
   );
   const targets = useMemo(() => explanationTargets(connections), [connections]);
 
-  // Frases de relación: se piden al abrir un versículo. La primera vez las genera Ollama.
+  // Frases de relación: se piden al abrir un versículo, en trozos de 8 y una tras otra, y
+  // cada trozo se muestra en cuanto llega. La primera vez las genera Ollama.
   useEffect(() => {
-    if (selectedId === null || targets.length === 0) return;
+    if (selectedId === null) return;
+    const verse = selectedId;
     const controller = new AbortController();
-    setExplanations({ status: "loading" });
-    fetchExplanations(selectedId, targets, controller.signal)
-      .then((result) => {
-        if (controller.signal.aborted) return;
-        setExplanations({
-          status: "done",
-          texts: new Map(result.explanations.map((e) => [e.other, e.text])),
-        });
-      })
-      .catch(() => {
-        if (!controller.signal.aborted) setExplanations({ status: "done", texts: new Map() });
+    setExplanations({ verse, texts: new Map(), pending: new Set(targets) });
+    const settle = (ids: number[], texts: [number, string | null][]) =>
+      setExplanations((current) => {
+        if (current.verse !== verse) return current;
+        const pending = new Set(current.pending);
+        ids.forEach((id) => pending.delete(id));
+        return { verse, texts: new Map([...current.texts, ...texts]), pending };
       });
+    (async () => {
+      for (const group of chunks(targets, EXPLANATION_CHUNK)) {
+        try {
+          const result = await fetchExplanations(verse, group, controller.signal);
+          settle(group, result.explanations.map((e) => [e.other, e.text]));
+        } catch {
+          if (controller.signal.aborted) return;
+          settle(group, []);
+        }
+      }
+    })();
     return () => controller.abort();
   }, [selectedId, targets]);
 
@@ -209,7 +228,7 @@ export function App() {
           node={selectedNode}
           nodes={nodes}
           connections={connections}
-          explanations={targets.length === 0 ? { status: "done", texts: new Map() } : explanations}
+          explanations={explanations}
           passage={passage}
           onSelectNode={setSelectedId}
           onOpenPassage={openPassage}

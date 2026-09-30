@@ -1,5 +1,6 @@
 """Aplicación FastAPI."""
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -26,6 +27,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # wait=False: la API arranca aunque la BD esté dormida o caída; /health no depende de ella.
     await pool.open(wait=False)
     app.state.pool = pool
+    # Las generaciones de frases van de una en una, como las atiende Ollama.
+    app.state.generation_lock = asyncio.Semaphore(1)
     yield
     await pool.close()
 

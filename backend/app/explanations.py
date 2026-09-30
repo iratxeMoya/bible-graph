@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 
 from psycopg_pool import AsyncConnectionPool
 
@@ -12,15 +13,20 @@ from app.schemas import Explanation, ExplanationsResponse
 from app.search import TRANSLATION
 
 MAX_OTHERS = 30
+# Pares por llamada al modelo. Con 30 de golpe tarda casi un minuto y basta un número de
+# frases equivocado para perderlas todas; en trozos, cada uno se guarda al terminar.
+GENERATION_CHUNK = 8
 
 log = logging.getLogger(__name__)
 
-# Los `others` que forman una referencia cruzada con `verse`, en cualquier sentido.
+# Los `others` que forman una referencia cruzada con `verse`, en cualquier sentido. Las
+# referencias de un versículo a sí mismo (Mateo 5:3 → Mateo 5:3-12) no llevan frase.
 LINKED_SQL = """
 SELECT DISTINCT CASE WHEN from_verse_id = %(verse)s THEN to_verse_id ELSE from_verse_id END AS other
 FROM edges
-WHERE (from_verse_id = %(verse)s AND to_verse_id = ANY(%(others)s))
-   OR (to_verse_id = %(verse)s AND from_verse_id = ANY(%(others)s))
+WHERE ((from_verse_id = %(verse)s AND to_verse_id = ANY(%(others)s))
+    OR (to_verse_id = %(verse)s AND from_verse_id = ANY(%(others)s)))
+  AND from_verse_id <> to_verse_id
 """
 
 CACHED_SQL = """
@@ -59,9 +65,45 @@ def verse_pair(key: tuple[int, int], texts: dict[int, dict]) -> VersePair:
     )
 
 
+class _NoLock:
+    async def __aenter__(self) -> None:
+        return None
+
+    async def __aexit__(self, *exc: object) -> None:
+        return None
+
+
+_NO_LOCK = _NoLock()
+
+
+async def _generate(
+    generator: Generator, keys: list[tuple[int, int]], texts: dict[int, dict]
+) -> dict[tuple[int, int], str]:
+    """Frases válidas de un trozo de pares. Si el modelo falla, un diccionario vacío."""
+    try:
+        raw = await asyncio.to_thread(generator.generate, [verse_pair(key, texts) for key in keys])
+    except Exception as error:  # noqa: BLE001 — sin modelo, el panel muestra el versículo
+        log.warning("No se pudieron generar frases: %s", error)
+        return {}
+    phrases = (clean_phrase(r) for r in raw)
+    return {key: text for key, text in zip(keys, phrases) if text is not None}
+
+
 async def explain(
-    pool: AsyncConnectionPool, generator: Generator | None, verse: int, others: list[int]
+    pool: AsyncConnectionPool,
+    generator: Generator | None,
+    verse: int,
+    others: list[int],
+    *,
+    lock: asyncio.Semaphore | None = None,
+    cancelled: Callable[[], Awaitable[bool]] | None = None,
 ) -> ExplanationsResponse:
+    """Frases de las relaciones de `verse` con `others`.
+
+    `lock` hace que las generaciones vayan de una en una (Ollama las atiende así de todos
+    modos). `cancelled` permite saltarse la generación si quien pidió ya se ha ido: al
+    navegar rápido por el panel, las peticiones abandonadas no se quedan en cola.
+    """
     async with query_connection(pool) as conn:
         cur = await conn.execute(LINKED_SQL, {"verse": verse, "others": others})
         linked = {row["other"] for row in await cur.fetchall()}
@@ -83,26 +125,20 @@ async def explain(
 
     # La llamada al modelo puede tardar decenas de segundos: se hace sin conexión del pool.
     if missing and generator is not None and all(i in texts for key in missing for i in key):
-        try:
-            raw = await asyncio.to_thread(
-                generator.generate, [verse_pair(key, texts) for key in missing]
-            )
-        except Exception as error:  # noqa: BLE001 — sin modelo, el panel muestra el versículo
-            log.warning("No se pudieron generar frases: %s", error)
-            raw = []
-        generated = {
-            key: text
-            for key, text in zip(missing, (clean_phrase(r) for r in raw))
-            if text is not None
-        }
-        if generated:
-            async with query_connection(pool) as conn:
-                async with conn.cursor() as cur:
-                    await cur.executemany(
-                        INSERT_SQL,
-                        [(a, b, text, generator.model) for (a, b), text in generated.items()],
-                    )
-            known.update(generated)
+        for start in range(0, len(missing), GENERATION_CHUNK):
+            chunk = missing[start : start + GENERATION_CHUNK]
+            async with lock or _NO_LOCK:
+                if cancelled is not None and await cancelled():
+                    break
+                generated = await _generate(generator, chunk, texts)
+            if generated:
+                async with query_connection(pool) as conn:
+                    async with conn.cursor() as cur:
+                        await cur.executemany(
+                            INSERT_SQL,
+                            [(a, b, text, generator.model) for (a, b), text in generated.items()],
+                        )
+                known.update(generated)
 
     return ExplanationsResponse(
         verse=verse,
