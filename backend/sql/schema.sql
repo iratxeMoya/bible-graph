@@ -45,3 +45,16 @@ CREATE TABLE IF NOT EXISTS edges (
 );
 CREATE INDEX IF NOT EXISTS edges_from_idx ON edges (from_verse_id, weight DESC);
 CREATE INDEX IF NOT EXISTS edges_to_idx ON edges (to_verse_id, weight DESC);
+
+-- Frases que explican una relación entre dos versículos, generadas con un modelo de
+-- lenguaje. Una por par sin dirección (verse_a < verse_b). Sin claves foráneas a
+-- propósito: la ingesta vacía verses y edges, y no debe borrar estas frases.
+CREATE TABLE IF NOT EXISTS relation_explanations (
+  verse_a    integer NOT NULL,
+  verse_b    integer NOT NULL,
+  text       text NOT NULL,
+  model      text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (verse_a, verse_b),
+  CHECK (verse_a < verse_b)
+);

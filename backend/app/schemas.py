@@ -32,6 +32,16 @@ class SearchResponse(BaseModel):
     edges: list[Edge]
 
 
+class Explanation(BaseModel):
+    other: int
+    text: str | None
+
+
+class ExplanationsResponse(BaseModel):
+    verse: int
+    explanations: list[Explanation]
+
+
 class Verse(BaseModel):
     id: int
     ref: str

@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 
 from app.config import Settings
 from app.db import create_pool
+from app.ollama import Generator, OllamaGenerator
 from app.routes import router
 
 HEALTH_DB_TIMEOUT_SECONDS = 3
@@ -29,9 +30,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await pool.close()
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def default_generator(settings: Settings) -> Generator | None:
+    if not settings.ollama_url:
+        return None
+    return OllamaGenerator(settings.ollama_url, settings.ollama_model)
+
+
+def create_app(settings: Settings | None = None, generator: Generator | None = None) -> FastAPI:
+    """`generator` sustituye al de Ollama (en los tests). Si falta, se decide por OLLAMA_URL."""
     app = FastAPI(title="bible-graph", lifespan=lifespan)
     app.state.settings = settings or Settings.from_env()
+    app.state.generator = generator or default_generator(app.state.settings)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=app.state.settings.allowed_origins,

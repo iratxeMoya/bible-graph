@@ -54,3 +54,19 @@ def test_load_rolls_back_everything_when_it_fails(database_url):
             raise AssertionError("load debería haber fallado")
         assert conn.execute("SELECT count(*) FROM verses").fetchone() == (len(VERSES),)
         assert conn.execute("SELECT count(*) FROM edges").fetchone() == (len(EDGES),)
+
+
+def test_load_keeps_relation_explanations(database_url):
+    with psycopg.connect(database_url) as conn:
+        apply_schema(conn)
+        conn.execute("TRUNCATE relation_explanations")
+        conn.execute(
+            "INSERT INTO relation_explanations (verse_a, verse_b, text, model)"
+            " VALUES (%s, %s, 'Una frase guardada antes de la ingesta.', 'm')",
+            (ROM_3_24, TIT_3_5),
+        )
+        conn.commit()
+        load(conn, VERSES, EDGES)
+        assert conn.execute("SELECT count(*) FROM relation_explanations").fetchone() == (1,)
+        conn.execute("TRUNCATE relation_explanations")
+        conn.commit()

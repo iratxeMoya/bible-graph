@@ -2,12 +2,12 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from psycopg_pool import AsyncConnectionPool
 
-from app import search
+from app import explanations, search
 from app.db import get_pool, query_connection
-from app.schemas import PassageResponse, SearchResponse
+from app.schemas import ExplanationsResponse, PassageResponse, SearchResponse
 
 router = APIRouter(prefix="/api")
 
@@ -55,3 +55,28 @@ async def verses_endpoint(
     if passage is None:
         raise HTTPException(404, "Versículo no encontrado")
     return passage
+
+
+def parse_ids(raw: str) -> list[int]:
+    """Convierte "1001001,43003016" en una lista de IDs, o lanza un 422."""
+    try:
+        ids = [int(part) for part in raw.split(",")]
+    except ValueError:
+        raise HTTPException(422, "others debe ser una lista de IDs separados por comas") from None
+    if not 1 <= len(ids) <= explanations.MAX_OTHERS:
+        raise HTTPException(422, f"others admite de 1 a {explanations.MAX_OTHERS} IDs")
+    if not all(1 <= i <= MAX_VERSE_ID for i in ids):
+        raise HTTPException(422, "others contiene IDs fuera de rango")
+    return ids
+
+
+@router.get("/explanations")
+async def explanations_endpoint(
+    pool: Pool,
+    request: Request,
+    verse: Annotated[int, Query(ge=1, le=MAX_VERSE_ID)],
+    others: Annotated[str, Query(max_length=400)],
+) -> ExplanationsResponse:
+    return await explanations.explain(
+        pool, request.app.state.generator, verse, parse_ids(others)
+    )
