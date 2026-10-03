@@ -1,0 +1,78 @@
+# Puertos del host configurables con DB_PORT, API_PORT y FRONTEND_PORT (por ejemplo en
+# un fichero .env junto a este), por si 5432, 8000 o 5173 ya están ocupados.
+
+x-backend: &backend
+  build:
+    context: ./backend
+    args:
+      REQUIREMENTS: requirements-dev.txt
+  image: bible-graph-backend
+  depends_on:
+    db:
+      condition: service_healthy
+  # Permite llegar al Ollama del host como host.docker.internal también en Linux.
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: bible
+      POSTGRES_PASSWORD: bible
+      POSTGRES_DB: bible
+    ports:
+      - "127.0.0.1:${DB_PORT:-5432}:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bible -d bible"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  api:
+    <<: *backend
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    environment:
+      DATABASE_URL: postgresql://bible:bible@db:5432/bible
+      ALLOWED_ORIGINS: http://localhost:${FRONTEND_PORT:-5173}
+      OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma4:e4b}
+      # Recarga al guardar también en Windows, donde el contenedor no recibe eventos de ficheros.
+      WATCHFILES_FORCE_POLLING: "true"
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    volumes:
+      - ./backend:/app
+
+  # Se lanza a demanda: docker compose run --rm ingest
+  # Para cargar otra BD (Neon): INGEST_DATABASE_URL="postgresql://..." docker compose run --rm ingest
+  # Frases en lote: docker compose run --rm ingest python -m ingest.explain --limit 5000
+  ingest:
+    <<: *backend
+    profiles: ["tools"]
+    command: python -m ingest
+    environment:
+      DATABASE_URL: ${INGEST_DATABASE_URL:-postgresql://bible:bible@db:5432/bible}
+      OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma4:e4b}
+    volumes:
+      - ./backend:/app
+      - ingest-cache:/cache
+
+  frontend:
+    build:
+      context: ./frontend
+      target: dev
+    environment:
+      VITE_API_URL: http://localhost:${API_PORT:-8000}
+      CHOKIDAR_USEPOLLING: "true"
+    ports:
+      - "127.0.0.1:${FRONTEND_PORT:-5173}:5173"
+    volumes:
+      - ./frontend:/app
+
+volumes:
+  db-data:
+  ingest-cache:
